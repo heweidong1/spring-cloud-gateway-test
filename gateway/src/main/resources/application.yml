@@ -1,0 +1,63 @@
+server:
+  port: 8000
+eureka:
+  client:
+    serviceUrl:
+        defaultZone: http://localhost:3000/eureka/  #eureka服务端提供的注册地址 参考服务端配置的这个路径
+  instance:
+    instance-id: gateway-0 #此实例注册到eureka服务端的唯一的实例ID
+    prefer-ip-address: true #是否显示IP地址
+    leaseRenewalIntervalInSeconds: 10 #eureka客户需要多长时间发送心跳给eureka服务器，表明它仍然活着,默认为30 秒 (与下面配置的单位都是秒)
+    leaseExpirationDurationInSeconds: 40 #Eureka服务器在接收到实例的最后一次发出的心跳后，需要等待多久才可以将此实例删除，默认为90秒
+spring:
+  redis:
+    host: 127.0.0.1
+    port: 6379
+    timeout: 5000
+  application:
+    name: service-gateway #此实例注册到eureka服务端的name
+  cloud:
+    gateway:
+      discovery:
+        locator:
+          enabled: true
+      #条件
+      routes:
+        - id: user
+          uri: lb://SERVICE-USER
+          predicates:
+#            - Query=name,1
+#            - Query=age
+#            - Path=/user/**
+            - Cookie=login, user-1 #路由条件  必须包含cookie 并且cookie得key，value 是login=user-1 【，是等于得意思】
+            #满足条件之后，路由之前执行过滤器
+          filters:
+            - name: Hystrix
+              args:
+                #name 值 是下边配置的名字
+                name: fallbackcmd
+                fallbackUri: forward:/fallback
+                #限流 结合redis
+                #     令牌桶算法  burstCapacity 一共2个令牌【可以同时处理2个请求】
+                #               replenishRate 刷新个数  每秒刷新多少令牌【删除】，从最刚开始生成的令牌删
+                #每次请求过来都会生成一个令牌，当访问的速率小于刷新的速率  永远不会限流  ，但是当突然大量的访问进来了
+                #如果访问的次数小于burstCapacity 也不会限流，但是当超过的时候 就会限流 429 ，然会过段时间
+                #删除了一些令牌后就能访问了
+            - name: RequestRateLimiter
+              KeyResolver: userKey
+              args:
+                redis-rate-limiter.replenishRate: 1
+                redis-rate-limiter.burstCapacity: 2
+
+
+hystrix:
+  command:
+    fallbackcmd:
+      execution:
+        isolation:
+          thread:
+            #设置得调用服务的相应时间 如果超过1秒 代表失败 要降级
+            timeoutInMilliseconds: 1000
+#      circuitBreaker:
+#        requestVolumeThreshold: 5
+#        sleepWindowInMilliseconds : 5000   时间
